@@ -1,5 +1,4 @@
-/*
- * JSumo Micro Sumo Robot Code
+/* JSumo Micro Sumo Robot Code
  * Model Number: XS1
  * Board Model: XMotion Micro
  *
@@ -28,13 +27,41 @@
 #define Left_Motor_Direction  13
 #define Left_Motor_Speed      5
 
-// speed setting (tune for robot performance)
-int Speed2 = 200;
+// Configuration constants
+const int kDefaultSpeed    = 200;
+const int kLineThreshold   = 45;
+const int kDebounceDelayMs = 15;
+const int kRetreatDelayMs  = 150;
+const int kTurnDelayMs     = 200;
+const int kLedBlinkCount   = 10;
+const int kLedBlinkDelayMs = 500;
+
+// Current runtime settings (tweakable)
+int baseSpeed = kDefaultSpeed;
 
 // stores last sensor direction seen: 0=left, 1=front, 2=right
-int Last_Value = 1;
+int lastDirection = 1;
 
-void Motor(int LeftMotorValue, int RightMotorValue) {
+// Direction constants
+enum Direction {
+  DIR_LEFT  = 0,
+  DIR_FRONT = 1,
+  DIR_RIGHT = 2,
+};
+
+// Forward declarations
+void setMotors(int leftMotorValue, int rightMotorValue);
+void stopMotors();
+void printSensorValues();
+void waitForStart();
+void preMatchBlink();
+bool handleLineSensor();
+bool processOpponentSensors();
+void actOnLastDirection();
+void setLeds(bool led1On, bool led2On);
+
+// Set motor outputs. Note: keeps original mapping (LeftMotorValue maps to right motor pins)
+void setMotors(int LeftMotorValue, int RightMotorValue) {
   if (LeftMotorValue < 0) {
     LeftMotorValue = abs(LeftMotorValue);
     digitalWrite(Right_Motor_Direction, LOW);
@@ -60,7 +87,7 @@ void Motor(int LeftMotorValue, int RightMotorValue) {
   }
 }
 
-void MotorStop() {
+void stopMotors() {
   digitalWrite(Left_Motor_Direction, HIGH);
   analogWrite(Left_Motor_Speed, 255);
   digitalWrite(Right_Motor_Direction, HIGH);
@@ -73,90 +100,131 @@ void setup() {
   pinMode(Front_Op_Sensor, INPUT);
   pinMode(Left_Op_Sensor, INPUT);
   pinMode(Right_Op_Sensor, INPUT);
+  pinMode(Line_Sensor, INPUT);
+  pinMode(Led1, OUTPUT);
+  pinMode(Led2, OUTPUT);
   pinMode(Left_Motor_Direction, OUTPUT);
   pinMode(Right_Motor_Direction, OUTPUT);
   pinMode(Left_Motor_Speed, OUTPUT);
   pinMode(Right_Motor_Speed, OUTPUT);
+  Serial.begin(9600);
+}
+
+// Print current sensor values to Serial
+void printSensorValues() {
+  Serial.print("Line_Sensor:");
+  Serial.print(analogRead(Line_Sensor));
+  Serial.print(",");
+  Serial.print("Front_Op_Sensor:");
+  Serial.print(analogRead(Front_Op_Sensor));
+  Serial.print(",");
+  Serial.print("Right_Op_Sensor:");
+  Serial.print(analogRead(Right_Op_Sensor));
+  Serial.print(",");
+  Serial.print("Left_Op_Sensor:");
+  Serial.print(analogRead(Left_Op_Sensor));
+  Serial.println();
+}
+
+// Wait for start button push while printing sensor values
+void waitForStart() {
+  while (digitalRead(Front_Button) == 1 && digitalRead(Back_Button) == 1) {
+    printSensorValues();
+    stopMotors();
+  }
+}
+
+// LED helpers
+void setLeds(bool led1On, bool led2On) {
+  digitalWrite(Led1, led1On ? HIGH : LOW);
+  digitalWrite(Led2, led2On ? HIGH : LOW);
+}
+
+// Blink LEDs during pre-match countdown
+void preMatchBlink() {
+  for (int x = 0; x < kLedBlinkCount; x++) {
+    if (x % 2 == 0)
+      setLeds(true, false);
+    else
+      setLeds(false, true);
+    delay(kLedBlinkDelayMs);
+  }
+}
+
+// Handle line sensor reading; returns true if line was detected and handled
+bool handleLineSensor() {
+  if (analogRead(Line_Sensor) < kLineThreshold) {
+    delay(kDebounceDelayMs);
+    if (analogRead(Line_Sensor) < kLineThreshold) {
+      setMotors(-baseSpeed, -baseSpeed);
+      delay(kRetreatDelayMs);
+      setMotors(-baseSpeed, baseSpeed);
+      delay(kTurnDelayMs);
+      setMotors(baseSpeed, baseSpeed);
+      return true;
+    }
+  }
+  return false;
+}
+
+// Process opponent sensors; returns true if any opponent sensor fired and action taken
+bool processOpponentSensors() {
+  if (digitalRead(Front_Op_Sensor) == 1) {
+    setMotors(baseSpeed, baseSpeed);
+    lastDirection = DIR_FRONT;
+    return true;
+  }
+  if (digitalRead(Left_Op_Sensor) == 1 && digitalRead(Right_Op_Sensor) == 0) {
+    setMotors(-baseSpeed, baseSpeed);
+    lastDirection = DIR_LEFT;
+    return true;
+  }
+  if (digitalRead(Left_Op_Sensor) == 0 && digitalRead(Right_Op_Sensor) == 1) {
+    setMotors(baseSpeed, -baseSpeed);
+    lastDirection = DIR_RIGHT;
+    return true;
+  }
+  return false;
+}
+
+void actOnLastDirection() {
+  if (lastDirection == DIR_LEFT)
+    setMotors(-baseSpeed, baseSpeed);
+  else if (lastDirection == DIR_FRONT)
+    setMotors(baseSpeed, baseSpeed);
+  else if (lastDirection == DIR_RIGHT)
+    setMotors(baseSpeed, -baseSpeed);
 }
 
 /////////////////////////////////
 //// Main Robot Code Routine ////
 /////////////////////////////////
 void loop() {
-  // while waiting for a start button push
-  while (digitalRead(Front_Button) == 1 && digitalRead(Back_Button) == 1) {
-    // sensor calidation routine, you can see the values of the sensors in the serial monitor
-    // to understand how they work and what values they give when they see something
-    Serial.print("Line_Sensor:");
-    Serial.print(analogRead(Line_Sensor));
-    Serial.print(",");
-    Serial.print("Front_Op_Sensor:");
-    Serial.print(analogRead(Front_Op_Sensor));
-    Serial.print(",");
-    Serial.print("Right_Op_Sensor:");
-    Serial.print(analogRead(Right_Op_Sensor));
-    Serial.print(",");
-    Serial.print("Left_Op_Sensor:");
-    Serial.print(analogRead(Left_Op_Sensor));
-    Serial.println();
-    MotorStop();
-  }
+  waitForStart();
 
-  // depending on which button was pressed, set Last_Value to prefer turning
-  if (digitalRead(Front_Button) == 0) Last_Value = 2;
-  if (digitalRead(Back_Button) == 0) Last_Value = 0;
+  // depending on which button was pressed, set preferred turning direction
+  if (digitalRead(Front_Button) == 0) lastDirection = DIR_RIGHT;
+  if (digitalRead(Back_Button) == 0) lastDirection = DIR_LEFT;
 
-  // 5-second countdown flashing LEDs (500ms x 10)
-  for (int x = 0; x < 10; x++) {
-    if (x % 2 == 0) {
-      digitalWrite(Led1, HIGH);
-      digitalWrite(Led2, LOW);
-    } else {
-      digitalWrite(Led1, LOW);
-      digitalWrite(Led2, HIGH);
-    }
-    delay(500);
-  }
+  // pre-match LED countdown
+  preMatchBlink();
 
   // Move forward
-  Motor(Speed2, Speed2);
+  setMotors(baseSpeed, baseSpeed);
 
   while (digitalRead(Front_Button) == 1 && digitalRead(Back_Button) == 1) {
-    // line sensor: retreat and turn if line detected
-    if (analogRead(Line_Sensor) < 45) {
-      delay(15); // helps ensure that we don't react to thin scratches
-      if (analogRead(Line_Sensor) < 45) {
-        Motor(-Speed2, -Speed2);
-        delay(150); // 150ms retreat
-        Motor(-Speed2, Speed2);
-        delay(200); // 200ms turning
-        Motor(Speed2, Speed2);
-      }
-    }
-    // Opponent sensor handling
-    else if (digitalRead(Front_Op_Sensor) == 1) {
-      // Front sensor sees opponent: full forward
-      Motor(Speed2, Speed2);
-      Last_Value = 1;
-    } else if (digitalRead(Left_Op_Sensor) == 1 && digitalRead(Right_Op_Sensor) == 0) {
-      // Left sensor sees opponent: turn left
-      Motor(-Speed2, Speed2);
-      Last_Value = 0;
-    } else if (digitalRead(Left_Op_Sensor) == 0 && digitalRead(Right_Op_Sensor) == 1) {
-      // Right sensor sees opponent: turn right
-      Motor(Speed2, -Speed2);
-      Last_Value = 2;
-    }
-    // No sensor data: act based on last seen direction
-    else if (Last_Value == 0)
-      Motor(-Speed2, Speed2);
-    else if (Last_Value == 1)
-      Motor(Speed2, Speed2);
-    else if (Last_Value == 2)
-      Motor(Speed2, -Speed2);
+    // Line handling has highest priority
+    if (handleLineSensor()) continue;
+
+    // Opponent sensors
+    if (processOpponentSensors()) continue;
+
+    // Otherwise act on last remembered direction
+    actOnLastDirection();
   }
 
   // in case button is pressed during match, stop and wait
+  stopMotors();
   delay(100);
   while (digitalRead(Front_Button) == 0 || digitalRead(Back_Button) == 0);
   delay(100);
