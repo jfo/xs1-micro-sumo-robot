@@ -31,16 +31,22 @@
 const int kDefaultSpeed    = 200;
 const int kLineThreshold   = 45;
 const int kDebounceDelayMs = 15;
-const int kRetreatDelayMs  = 150;
-const int kTurnDelayMs     = 200;
-const int kLedBlinkCount   = 10;
-const int kLedBlinkDelayMs = 500;
+const int kRetreatDelayMs  = 300;
+const int kTurnDelayMs     = 150;
+const int kMinTurnDelayMs  = 100;
+const int kMaxTurnDelayMs  = 200;
+const int kLedBlinkCount   = 5;
+const int kLedBlinkDelayMs = 100;
+const int kAccelStepDelayMs = 1;
+const int kMaxSpeedHoldSeconds = 2;
 
 // Current runtime settings (tweakable)
 int baseSpeed = kDefaultSpeed;
 
 // stores last sensor direction seen: 0=left, 1=front, 2=right
 int lastDirection = 1;
+bool hasAccelerated = false;
+bool hasStarted = false;
 
 // Direction constants
 enum Direction {
@@ -59,6 +65,7 @@ bool handleLineSensor();
 bool processOpponentSensors();
 void actOnLastDirection();
 void setLeds(bool led1On, bool led2On);
+void quadraticAcceleration();
 
 // Set motor outputs. Note: keeps original mapping (LeftMotorValue maps to right motor pins)
 void setMotors(int LeftMotorValue, int RightMotorValue) {
@@ -151,15 +158,26 @@ void preMatchBlink() {
   }
 }
 
-// Handle line sensor reading; returns true if line was detected and handled
+void quadraticAcceleration() {
+  for (int step = 100; step <= kDefaultSpeed; step++) {
+    long scaled = static_cast<long>(step) * step;
+    int speed = static_cast<int>(scaled / kDefaultSpeed);
+    setMotors(speed, speed);
+    delay(kAccelStepDelayMs);
+  }
+  // delay(kMaxSpeedHoldSeconds * 1000L);
+}
+
 bool handleLineSensor() {
   if (analogRead(Line_Sensor) < kLineThreshold) {
     delay(kDebounceDelayMs);
     if (analogRead(Line_Sensor) < kLineThreshold) {
+      baseSpeed = random(70, 231);
       setMotors(-baseSpeed, -baseSpeed);
       delay(kRetreatDelayMs);
+      int turnDelayMs = random(kMinTurnDelayMs, kMaxTurnDelayMs + 1);
       setMotors(-baseSpeed, baseSpeed);
-      delay(kTurnDelayMs);
+      delay(turnDelayMs);
       setMotors(baseSpeed, baseSpeed);
       return true;
     }
@@ -167,65 +185,38 @@ bool handleLineSensor() {
   return false;
 }
 
-// Process opponent sensors; returns true if any opponent sensor fired and action taken
 bool processOpponentSensors() {
   if (digitalRead(Front_Op_Sensor) == 1) {
     setMotors(baseSpeed, baseSpeed);
-    lastDirection = DIR_FRONT;
     return true;
   }
   if (digitalRead(Left_Op_Sensor) == 1 && digitalRead(Right_Op_Sensor) == 0) {
     setMotors(-baseSpeed, baseSpeed);
-    lastDirection = DIR_LEFT;
     return true;
   }
   if (digitalRead(Left_Op_Sensor) == 0 && digitalRead(Right_Op_Sensor) == 1) {
     setMotors(baseSpeed, -baseSpeed);
-    lastDirection = DIR_RIGHT;
     return true;
   }
   return false;
 }
 
-void actOnLastDirection() {
-  if (lastDirection == DIR_LEFT)
-    setMotors(-baseSpeed, baseSpeed);
-  else if (lastDirection == DIR_FRONT)
-    setMotors(baseSpeed, baseSpeed);
-  else if (lastDirection == DIR_RIGHT)
-    setMotors(baseSpeed, -baseSpeed);
-}
-
-/////////////////////////////////
-//// Main Robot Code Routine ////
-/////////////////////////////////
 void loop() {
-  waitForStart();
-
-  // depending on which button was pressed, set preferred turning direction
-  if (digitalRead(Front_Button) == 0) lastDirection = DIR_RIGHT;
-  if (digitalRead(Back_Button) == 0) lastDirection = DIR_LEFT;
-
-  // pre-match LED countdown
-  preMatchBlink();
-
-  // Move forward
-  setMotors(baseSpeed, baseSpeed);
-
-  while (digitalRead(Front_Button) == 1 && digitalRead(Back_Button) == 1) {
-    // Line handling has highest priority
-    if (handleLineSensor()) continue;
-
-    // Opponent sensors
-    if (processOpponentSensors()) continue;
-
-    // Otherwise act on last remembered direction
-    actOnLastDirection();
+  if (!hasStarted) {
+    waitForStart();
+    hasStarted = true;
+    preMatchBlink();
   }
 
-  // in case button is pressed during match, stop and wait
-  stopMotors();
-  delay(100);
-  while (digitalRead(Front_Button) == 0 || digitalRead(Back_Button) == 0);
-  delay(100);
+  if (!hasAccelerated) {
+    quadraticAcceleration();
+    hasAccelerated = true;
+  }
+
+  while (true) {
+    if (handleLineSensor()) continue;
+    if (processOpponentSensors()) continue;
+  }
 }
+
+
