@@ -28,6 +28,7 @@
 #define Left_Motor_Speed      5
 
 // Configuration constants
+const int topSpeed    = 230;
 const int kDefaultSpeed    = 200;
 const int kLineThreshold   = 45;
 const int kDebounceDelayMs = 15;
@@ -35,6 +36,11 @@ const int kRetreatDelayMs  = 300;
 const int kTurnDelayMs     = 150;
 const int kMinTurnDelayMs  = 100;
 const int kMaxTurnDelayMs  = 200;
+const unsigned long kEdgeTimeoutMs = 5000;
+const int kFlipTriggerCount = 3;
+const unsigned long kFlipWindowMs = 1000;
+const int kFlipRecoveryBackMs = 600;
+const int kFlipRecoverySpeed = 255;
 const int kLedBlinkCount   = 5;
 const int kLedBlinkDelayMs = 100;
 const int kAccelStepDelayMs = 1;
@@ -47,6 +53,9 @@ int baseSpeed = kDefaultSpeed;
 int lastDirection = 1;
 bool hasAccelerated = false;
 bool hasStarted = false;
+unsigned long lastEdgeMillis = 0;
+unsigned long flipWindowStartMs = 0;
+int flipTriggerCount = 0;
 
 // Direction constants
 enum Direction {
@@ -63,6 +72,7 @@ void waitForStart();
 void preMatchBlink();
 bool handleLineSensor();
 bool processOpponentSensors();
+bool handleEdgeTimeout();
 void actOnLastDirection();
 void setLeds(bool led1On, bool led2On);
 void quadraticAcceleration();
@@ -172,7 +182,23 @@ bool handleLineSensor() {
   if (analogRead(Line_Sensor) < kLineThreshold) {
     delay(kDebounceDelayMs);
     if (analogRead(Line_Sensor) < kLineThreshold) {
-      baseSpeed = random(70, 231);
+      lastEdgeMillis = millis();
+      unsigned long now = millis();
+      if (now - flipWindowStartMs > kFlipWindowMs) {
+        flipWindowStartMs = now;
+        flipTriggerCount = 0;
+      }
+      flipTriggerCount++;
+      if (flipTriggerCount >= kFlipTriggerCount) {
+        flipTriggerCount = 0;
+        setMotors(0,0);
+        delay(kFlipRecoveryBackMs);
+        setMotors(-kFlipRecoverySpeed, -kFlipRecoverySpeed);
+        delay(kFlipRecoveryBackMs);
+        setMotors(baseSpeed, baseSpeed);
+        return true;
+      }
+      baseSpeed = random(100, 201);
       setMotors(-baseSpeed, -baseSpeed);
       delay(kRetreatDelayMs);
       int turnDelayMs = random(kMinTurnDelayMs, kMaxTurnDelayMs + 1);
@@ -185,9 +211,28 @@ bool handleLineSensor() {
   return false;
 }
 
+bool handleEdgeTimeout() {
+  if (millis() - lastEdgeMillis >= kEdgeTimeoutMs) {
+    lastEdgeMillis = millis();
+    baseSpeed = random(100, 201);
+    setMotors(-baseSpeed, -baseSpeed);
+    delay(kRetreatDelayMs);
+    int turnDelayMs = random(kMinTurnDelayMs, kMaxTurnDelayMs + 1);
+    bool turnLeft = random(0, 2) == 0;
+    if (turnLeft)
+      setMotors(-baseSpeed, baseSpeed);
+    else
+      setMotors(baseSpeed, -baseSpeed);
+    delay(turnDelayMs);
+    setMotors(baseSpeed, baseSpeed);
+    return true;
+  }
+  return false;
+}
+
 bool processOpponentSensors() {
   if (digitalRead(Front_Op_Sensor) == 1) {
-    setMotors(baseSpeed, baseSpeed);
+    setMotors(topSpeed, topSpeed);
     return true;
   }
   if (digitalRead(Left_Op_Sensor) == 1 && digitalRead(Right_Op_Sensor) == 0) {
@@ -213,10 +258,11 @@ void loop() {
     hasAccelerated = true;
   }
 
+  if (lastEdgeMillis == 0) lastEdgeMillis = millis();
+
   while (true) {
     if (handleLineSensor()) continue;
+    if (handleEdgeTimeout()) continue;
     if (processOpponentSensors()) continue;
   }
 }
-
-
