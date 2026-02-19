@@ -31,6 +31,7 @@
 const int topSpeed    = 230;
 const int kDefaultSpeed    = 200;
 const int kLineThreshold   = 45;
+const int kTipThreshold = 950;
 const int kDebounceDelayMs = 15;
 const int kRetreatDelayMs  = 300;
 const int kTurnDelayMs     = 150;
@@ -41,7 +42,7 @@ const int kFlipTriggerCount = 3;
 const unsigned long kFlipWindowMs = 1000;
 const int kFlipRecoveryBackMs = 600;
 const int kFlipRecoverySpeed = 255;
-const int kLedBlinkCount   = 5;
+const int kLedBlinkCount   = 50;
 const int kLedBlinkDelayMs = 100;
 const int kAccelStepDelayMs = 1;
 const int kMaxSpeedHoldSeconds = 2;
@@ -181,32 +182,22 @@ void quadraticAcceleration() {
 bool handleLineSensor() {
   if (analogRead(Line_Sensor) < kLineThreshold) {
     delay(kDebounceDelayMs);
-    if (analogRead(Line_Sensor) < kLineThreshold) {
-      lastEdgeMillis = millis();
-      unsigned long now = millis();
-      if (now - flipWindowStartMs > kFlipWindowMs) {
-        flipWindowStartMs = now;
-        flipTriggerCount = 0;
-      }
-      flipTriggerCount++;
-      if (flipTriggerCount >= kFlipTriggerCount) {
-        flipTriggerCount = 0;
-        setMotors(0,0);
-        delay(kFlipRecoveryBackMs);
-        setMotors(-kFlipRecoverySpeed, -kFlipRecoverySpeed);
-        delay(kFlipRecoveryBackMs);
-        setMotors(baseSpeed, baseSpeed);
-        return true;
-      }
-      baseSpeed = random(100, 201);
-      setMotors(-baseSpeed, -baseSpeed);
-      delay(kRetreatDelayMs);
-      int turnDelayMs = random(kMinTurnDelayMs, kMaxTurnDelayMs + 1);
-      setMotors(-baseSpeed, baseSpeed);
-      delay(turnDelayMs);
-      setMotors(baseSpeed, baseSpeed);
-      return true;
-    }
+    baseSpeed = random(100, 201);
+    setMotors(-baseSpeed, -baseSpeed);
+    delay(kRetreatDelayMs);
+    int turnDelayMs = random(kMinTurnDelayMs, kMaxTurnDelayMs + 1);
+    setMotors(-baseSpeed, baseSpeed);
+    delay(turnDelayMs);
+    setMotors(baseSpeed, baseSpeed);
+    return true;
+  }
+  if (analogRead(Line_Sensor) > kTipThreshold) {
+    setMotors(0,0);
+    delay(kFlipRecoveryBackMs);
+    setMotors(kFlipRecoverySpeed, kFlipRecoverySpeed);
+    delay(kFlipRecoveryBackMs);
+    setMotors(baseSpeed, baseSpeed);
+    return true;
   }
   return false;
 }
